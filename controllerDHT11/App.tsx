@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { View, Text, StyleSheet, Animated, Easing } from 'react-native';
 import useWebSocket from 'react-native-use-websocket';
 
@@ -6,13 +6,16 @@ export default function ClimateMonitor() {
   const [temp, setTemp] = useState<number>(0);
   const [hum, setHum] = useState<number>(0);
   const [connected, setConnected] = useState(false);
+  const [connectionStatus, setConnectionStatus] = useState('Conectando...');
   
-  const pulseAnim = new Animated.Value(0);
-  const rotateAnim = new Animated.Value(0);
+  const pulseAnim = useRef(new Animated.Value(0)).current;
+  const rotateAnim = useRef(new Animated.Value(0)).current;
+  const statusAnim = useRef(new Animated.Value(0)).current;
   const wsUrl = 'ws://192.168.191.225:81';
 
-  // Animación continua
+  // Animaciones
   useEffect(() => {
+    // Animación de pulso para la tarjeta
     Animated.loop(
       Animated.sequence([
         Animated.timing(pulseAnim, {
@@ -28,6 +31,7 @@ export default function ClimateMonitor() {
       ])
     ).start();
 
+    // Animación de rotación de partículas
     Animated.loop(
       Animated.timing(rotateAnim, {
         toValue: 1,
@@ -38,18 +42,42 @@ export default function ClimateMonitor() {
     ).start();
   }, []);
 
+  // Animación de cambio de estado
+  useEffect(() => {
+    Animated.timing(statusAnim, {
+      toValue: connected ? 1 : 0,
+      duration: 500,
+      useNativeDriver: false,
+    }).start();
+    
+    setConnectionStatus(connected ? 'C' : 'D');
+  }, [connected]);
+
   const { lastMessage } = useWebSocket(wsUrl, {
-    onOpen: () => setConnected(true),
-    onError: () => setConnected(false),
+    onOpen: () => {
+      console.log('Conexión establecida');
+      setConnected(true);
+    },
+    onError: (e) => {
+      console.log('Error de conexión:', e);
+      setConnected(false);
+    },
+    onClose: () => {
+      console.log('Conexión cerrada');
+      setConnected(false);
+    },
     shouldReconnect: () => true,
     reconnectInterval: 3000,
+    reconnectAttempts: 10,
   });
 
   useEffect(() => {
     if (lastMessage?.data) {
       const [temperature, humidity] = lastMessage.data.split(',').map(parseFloat);
-      setTemp(temperature);
-      setHum(humidity);
+      if (!isNaN(temperature) && !isNaN(humidity)) {
+        setTemp(temperature);
+        setHum(humidity);
+      }
     }
   }, [lastMessage]);
 
@@ -61,6 +89,16 @@ export default function ClimateMonitor() {
   const rotateInterp = rotateAnim.interpolate({
     inputRange: [0, 1],
     outputRange: ['0deg', '360deg']
+  });
+
+  const statusColor = statusAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: ['#FF0000', '#00FF00']
+  });
+
+  const statusTextColor = statusAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: ['#FF5555', '#55FF55']
   });
 
   const getTempColor = (t: number) => {
@@ -75,53 +113,71 @@ export default function ClimateMonitor() {
       {/* Fondo de partículas */}
       <Animated.View style={[styles.particle, {
         transform: [{ rotate: rotateInterp }],
-        opacity: 0.15
+        opacity: connected ? 0.15 : 0.05
       }]} />
 
-      {/* Header */}
+      {/* Header con estado de conexión */}
       <View style={styles.header}>
         <Text style={styles.title}>CLIMATE MONITOR</Text>
-        <View style={[styles.status, { backgroundColor: connected ? '#0F0' : '#F00' }]} />
+        <View style={styles.statusContainer}>
+          <Animated.Text style={[styles.statusText, { 
+            color: statusTextColor 
+          }]}>
+            {connectionStatus}
+          </Animated.Text>
+          <Animated.View style={[styles.statusLight, { 
+            backgroundColor: statusColor,
+            shadowColor: statusColor,
+          }]} />
+        </View>
       </View>
 
       {/* Tarjeta de temperatura */}
       <Animated.View style={[styles.card, { 
         transform: [{ scale: pulseScale }],
-        borderColor: getTempColor(temp) 
+        borderColor: getTempColor(temp),
+        opacity: connected ? 1 : 0.6
       }]}>
         <Text style={styles.cardLabel}>TEMPERATURA</Text>
         <View style={styles.valueContainer}>
           <Text style={[styles.value, { color: getTempColor(temp) }]}>
-            {temp.toFixed(1)}
+            {connected ? temp.toFixed(1) : '--'}
           </Text>
           <Text style={styles.unit}>°C</Text>
         </View>
         <View style={styles.barContainer}>
           <View style={[styles.tempBar, { 
-            width: `${Math.min(100, (temp/40)*100)}%`,
+            width: connected ? `${Math.min(100, (temp/40)*100)}%` : '0%',
             backgroundColor: getTempColor(temp) 
           }]} />
         </View>
       </Animated.View>
 
       {/* Tarjeta de humedad */}
-      <View style={[styles.card, { borderColor: '#00AAFF' }]}>
+      <View style={[styles.card, { 
+        borderColor: '#00AAFF',
+        opacity: connected ? 1 : 0.6
+      }]}>
         <Text style={styles.cardLabel}>HUMEDAD</Text>
         <View style={styles.valueContainer}>
           <Text style={[styles.value, { color: '#00AAFF' }]}>
-            {hum.toFixed(1)}
+            {connected ? hum.toFixed(1) : '--'}
           </Text>
           <Text style={styles.unit}>%</Text>
         </View>
         <View style={styles.barContainer}>
-          <View style={[styles.humBar, { width: `${Math.min(100, hum)}%` }]} />
+          <View style={[styles.humBar, { 
+            width: connected ? `${Math.min(100, hum)}%` : '0%'
+          }]} />
         </View>
       </View>
 
       {/* Detalles */}
       <View style={styles.footer}>
         <Text style={styles.footerText}>DHT11 @ ESP32</Text>
-        <Text style={styles.footerText}>Actualizado cada 2 segundos</Text>
+        <Text style={styles.footerText}>
+          {connected ? 'Actualizado cada 2 segundos' : 'Intentando reconectar...'}
+        </Text>
       </View>
     </View>
   );
@@ -148,22 +204,32 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     marginBottom: 40,
-    justifyContent: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 10,
   },
   title: {
     color: '#FFF',
     fontSize: 24,
     fontWeight: 'bold',
     letterSpacing: 3,
-    marginRight: 15,
   },
-  status: {
+  statusContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  statusText: {
+    fontSize: 16,
+    fontWeight: '600',
+    marginRight: 10,
+    letterSpacing: 1,
+  },
+  statusLight: {
     width: 12,
     height: 12,
     borderRadius: 6,
-    shadowColor: '#0F0',
+    shadowOffset: { width: 0, height: 0 },
     shadowRadius: 5,
-    shadowOpacity: 0.8,
+    shadowOpacity: 1,
   },
   card: {
     backgroundColor: 'rgba(255, 255, 255, 0.08)',

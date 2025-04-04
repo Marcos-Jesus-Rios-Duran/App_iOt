@@ -17,7 +17,7 @@ export default function RGBControl() {
       setConnected(true);
     },
     onError: (e) => {
-      console.log('Error:', e);
+      console.log('Error al conectar:', e);
       setConnected(false);
     },
     shouldReconnect: () => true,
