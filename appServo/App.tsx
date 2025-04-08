@@ -1,149 +1,179 @@
-import React, { useEffect, useRef, useState } from 'react';
-import { View, Text, StyleSheet, Animated, TouchableOpacity } from 'react-native';
+import React, { useRef, useState, useEffect } from 'react';
+import { View, Text, StyleSheet, Animated, TouchableOpacity, Platform } from 'react-native';
 import Slider from '@react-native-community/slider';
 
-export default function ServoControl() {
-  const ws = useRef(null);
-  const [temperature, setTemperature] = useState('--');
-  const [humidity, setHumidity] = useState('--');
+export default function NeonServoControl() {
+  const ws = useRef<WebSocket | null>(null);
   const [servoAngle, setServoAngle] = useState(90);
   const [connected, setConnected] = useState(false);
   const pulseAnim = useRef(new Animated.Value(0)).current;
+  const glowAnim = useRef(new Animated.Value(0)).current;
 
-  // Animación de conexión
+  // Animaciones compatibles
   useEffect(() => {
+    // Animación de glow (sin shadowColor)
+    Animated.loop(
+      Animated.sequence([
+        Animated.timing(glowAnim, {
+          toValue: 1,
+          duration: 1500,
+          useNativeDriver: true,
+        }),
+        Animated.timing(glowAnim, {
+          toValue: 0,
+          duration: 1500,
+          useNativeDriver: true,
+        })
+      ])
+    ).start();
+
+    // Animación de conexión
     Animated.loop(
       Animated.sequence([
         Animated.timing(pulseAnim, {
           toValue: 1,
-          duration: connected ? 2000 : 1000,
-          useNativeDriver: true,
+          duration: connected ? 3000 : 1000,
+          useNativeDriver: false, // Importante para efectos de sombra
         }),
         Animated.timing(pulseAnim, {
           toValue: 0,
-          duration: connected ? 2000 : 1000,
-          useNativeDriver: true,
+          duration: connected ? 3000 : 1000,
+          useNativeDriver: false,
         })
       ])
     ).start();
   }, [connected]);
 
+  // Conexión WebSocket mejorada
   useEffect(() => {
-    ws.current = new WebSocket('ws://192.168.4.1:81');
+    const wsUrl = 'ws://192.168.243.225:81';
+    console.log('Intentando conectar a:', wsUrl);
+    
+    ws.current = new WebSocket(wsUrl);
 
-    ws.current.onopen = () => {
-      console.log('Conectado al servidor WebSocket');
+    const handleOpen = () => {
+      console.log('Conexión WebSocket establecida');
       setConnected(true);
+      // Enviar mensaje de prueba
+      ws.current?.send('ping');
     };
 
-    ws.current.onmessage = (e) => {
-      if (e.data.startsWith('data:')) {
-        const [temp, hum] = e.data.replace('data:', '').split(',');
-        setTemperature(temp);
-        setHumidity(hum);
-      }
+    const handleMessage = (e: MessageEvent) => {
+      console.log('Mensaje recibido:', e.data);
     };
 
-    ws.current.onerror = (e) => {
-      console.log('Error de conexión:', e);
+    const handleError = (e: Event) => {
+      console.log('Error WebSocket:', e);
       setConnected(false);
     };
 
-    ws.current.onclose = () => {
-      console.log('Conexión cerrada');
+    const handleClose = () => {
+      console.log('Conexión WebSocket cerrada');
       setConnected(false);
     };
 
-    return () => ws.current.close();
+    ws.current.addEventListener('open', handleOpen);
+    ws.current.addEventListener('message', handleMessage);
+    ws.current.addEventListener('error', handleError);
+    ws.current.addEventListener('close', handleClose);
+
+    return () => {
+      ws.current?.removeEventListener('open', handleOpen);
+      ws.current?.removeEventListener('message', handleMessage);
+      ws.current?.removeEventListener('error', handleError);
+      ws.current?.removeEventListener('close', handleClose);
+      ws.current?.close();
+    };
   }, []);
 
-  const getData = () => {
-    if (ws.current.readyState === WebSocket.OPEN) {
-      ws.current.send('getData');
-    }
-  };
-
-  const moveServo = (angle) => {
+  const moveServo = (angle: number) => {
     const newAngle = Math.round(angle);
     setServoAngle(newAngle);
-    if (ws.current.readyState === WebSocket.OPEN) {
+    if (ws.current?.readyState === WebSocket.OPEN) {
       ws.current.send(`servo:${newAngle}`);
     }
   };
 
-  const presetAngle = (angle) => {
-    moveServo(angle);
-  };
+  const presetAngle = (angle: number) => moveServo(angle);
 
+  // Interpolaciones seguras
   const pulseColor = pulseAnim.interpolate({
     inputRange: [0, 1],
-    outputRange: ['#FF0000', connected ? '#00FF00' : '#FF3333']
+    outputRange: ['#ff0a54', connected ? '#00f5d4' : '#ff206e']
+  });
+
+  const glowOpacity = glowAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: [0.7, 1]
   });
 
   return (
     <View style={styles.container}>
-      {/* Header con indicador de conexión */}
+      {/* Header */}
       <View style={styles.header}>
-        <Text style={styles.title}>CONTROL SERVOMOTOR</Text>
+        <Animated.Text style={[styles.title, {
+          opacity: glowOpacity,
+          textShadowColor: Platform.OS === 'ios' ? '#00f5d4' : undefined,
+          textShadowOffset: Platform.OS === 'ios' ? { width: 0, height: 0 } : undefined,
+          textShadowRadius: Platform.OS === 'ios' ? 10 : undefined,
+        }]}>
+          SERVO NEON CONTROL
+        </Animated.Text>
+        
         <View style={styles.connectionStatus}>
           <Animated.View style={[styles.statusIndicator, { 
             backgroundColor: pulseColor,
-            shadowColor: pulseColor,
+            // Shadow solo aplica cuando useNativeDriver es false
+            ...(Platform.OS === 'android' && {
+              elevation: 8,
+              shadowColor: '#00f5d4'
+            })
           }]} />
           <Text style={styles.statusText}>
-            {connected ? 'CONECTADO' : 'DESCONECTADO'}
+            {connected ? 'ONLINE' : 'OFFLINE'}
           </Text>
         </View>
       </View>
 
-      {/* Tarjeta de datos del sensor */}
-      <View style={styles.dataCard}>
-        <Text style={styles.dataTitle}>DATOS DEL SENSOR</Text>
-        <View style={styles.dataRow}>
-          <Text style={styles.dataLabel}>Temperatura:</Text>
-          <Text style={styles.dataValue}>{temperature}°C</Text>
-        </View>
-        <View style={styles.dataRow}>
-          <Text style={styles.dataLabel}>Humedad:</Text>
-          <Text style={styles.dataValue}>{humidity}%</Text>
-        </View>
-        <TouchableOpacity 
-          style={styles.refreshButton}
-          onPress={getData}
-        >
-          <Text style={styles.buttonText}>ACTUALIZAR DATOS</Text>
-        </TouchableOpacity>
-      </View>
-
-      {/* Control del servomotor */}
-      <View style={styles.controlCard}>
-        <Text style={styles.controlTitle}>CONTROL SERVO</Text>
-        
-        {/* Botones de posición predefinida */}
+      {/* Panel de control */}
+      <Animated.View style={[styles.controlPanel, {
+        borderColor: '#00f5d4',
+        opacity: glowOpacity,
+        ...(Platform.OS === 'android' && {
+          elevation: 10,
+          shadowColor: '#00f5d4'
+        })
+      }]}>
+        {/* Botones de posición */}
         <View style={styles.presetButtons}>
-          <TouchableOpacity 
-            style={styles.presetButton}
-            onPress={() => presetAngle(0)}
-          >
-            <Text style={styles.buttonText}>0°</Text>
-          </TouchableOpacity>
-          <TouchableOpacity 
-            style={styles.presetButton}
-            onPress={() => presetAngle(90)}
-          >
-            <Text style={styles.buttonText}>90°</Text>
-          </TouchableOpacity>
-          <TouchableOpacity 
-            style={styles.presetButton}
-            onPress={() => presetAngle(180)}
-          >
-            <Text style={styles.buttonText}>180°</Text>
-          </TouchableOpacity>
+          {[0, 90, 180].map((angle) => (
+            <TouchableOpacity
+              key={angle}
+              style={[styles.presetButton, {
+                backgroundColor: angle === 0 ? '#ff206e' : 
+                                angle === 90 ? '#00f5d4' : '#8338ec',
+                ...(Platform.OS === 'android' && {
+                  elevation: 5,
+                  shadowColor: '#00f5d4'
+                })
+              }]}
+              onPress={() => presetAngle(angle)}
+            >
+              <Text style={styles.buttonText}>{angle}°</Text>
+            </TouchableOpacity>
+          ))}
         </View>
 
         {/* Control deslizante */}
         <View style={styles.sliderContainer}>
-          <Text style={styles.angleText}>Ángulo actual: {servoAngle}°</Text>
+          <Animated.Text style={[styles.angleText, {
+            textShadowColor: Platform.OS === 'ios' ? '#00f5d4' : undefined,
+            textShadowOffset: Platform.OS === 'ios' ? { width: 0, height: 0 } : undefined,
+            textShadowRadius: Platform.OS === 'ios' ? 5 : undefined,
+          }]}>
+            ANGLE: {servoAngle}°
+          </Animated.Text>
+          
           <Slider
             style={styles.slider}
             minimumValue={0}
@@ -151,17 +181,18 @@ export default function ServoControl() {
             step={1}
             value={servoAngle}
             onValueChange={moveServo}
-            minimumTrackTintColor="#FF5500"
-            maximumTrackTintColor="#333333"
-            thumbTintColor="#FFAA00"
+            minimumTrackTintColor="#8338ec"
+            maximumTrackTintColor="#3a0ca3"
+            thumbTintColor="#00f5d4"
           />
+          
           <View style={styles.sliderLabels}>
-            <Text style={styles.sliderLabel}>0°</Text>
-            <Text style={styles.sliderLabel}>90°</Text>
-            <Text style={styles.sliderLabel}>180°</Text>
+            <Text style={[styles.sliderLabel, { color: '#ff206e' }]}>0°</Text>
+            <Text style={[styles.sliderLabel, { color: '#00f5d4' }]}>90°</Text>
+            <Text style={[styles.sliderLabel, { color: '#8338ec' }]}>180°</Text>
           </View>
         </View>
-      </View>
+      </Animated.View>
     </View>
   );
 }
@@ -169,20 +200,19 @@ export default function ServoControl() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#0A0A1A',
+    backgroundColor: '#0a0a1a',
     padding: 20,
   },
   header: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 30,
+    marginBottom: 40,
   },
   title: {
-    color: '#FFFFFF',
-    fontSize: 20,
+    color: '#00f5d4',
+    fontSize: 24,
     fontWeight: 'bold',
-    letterSpacing: 1,
+    letterSpacing: 2,
+    marginBottom: 15,
   },
   connectionStatus: {
     flexDirection: 'row',
@@ -195,83 +225,47 @@ const styles = StyleSheet.create({
     marginRight: 8,
     shadowOffset: { width: 0, height: 0 },
     shadowRadius: 8,
-    shadowOpacity: 0.8,
+    shadowOpacity: 1,
   },
   statusText: {
-    color: '#FFFFFF',
+    color: '#ffffff',
     fontSize: 14,
     fontWeight: '600',
-  },
-  dataCard: {
-    backgroundColor: 'rgba(0, 170, 255, 0.1)',
-    borderRadius: 15,
-    padding: 20,
-    marginBottom: 25,
-    borderWidth: 1,
-    borderColor: 'rgba(0, 170, 255, 0.3)',
-  },
-  dataTitle: {
-    color: '#00AAFF',
-    fontSize: 16,
-    fontWeight: 'bold',
-    marginBottom: 15,
     letterSpacing: 1,
   },
-  dataRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginBottom: 10,
-  },
-  dataLabel: {
-    color: 'rgba(255, 255, 255, 0.7)',
-    fontSize: 16,
-  },
-  dataValue: {
-    color: '#FFFFFF',
-    fontSize: 16,
-    fontWeight: '600',
-  },
-  refreshButton: {
-    backgroundColor: '#00AAFF',
-    borderRadius: 8,
-    padding: 12,
-    marginTop: 15,
-    alignItems: 'center',
-  },
-  controlCard: {
-    backgroundColor: 'rgba(255, 170, 0, 0.1)',
-    borderRadius: 15,
-    padding: 20,
-    borderWidth: 1,
-    borderColor: 'rgba(255, 170, 0, 0.3)',
-  },
-  controlTitle: {
-    color: '#FFAA00',
-    fontSize: 16,
-    fontWeight: 'bold',
-    marginBottom: 20,
-    letterSpacing: 1,
+  controlPanel: {
+    backgroundColor: 'rgba(0, 10, 20, 0.7)',
+    borderRadius: 20,
+    padding: 25,
+    borderWidth: 2,
+    shadowOffset: { width: 0, height: 0 },
+    shadowRadius: 15,
+    shadowOpacity: 0.7,
   },
   presetButtons: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    marginBottom: 25,
+    marginBottom: 30,
   },
   presetButton: {
-    backgroundColor: '#FF5500',
-    borderRadius: 8,
+    borderRadius: 10,
     padding: 15,
     width: '30%',
     alignItems: 'center',
+    shadowOffset: { width: 0, height: 0 },
+    shadowRadius: 10,
+    shadowOpacity: 0.7,
   },
   sliderContainer: {
     marginBottom: 10,
   },
   angleText: {
-    color: '#FFFFFF',
-    fontSize: 16,
-    marginBottom: 15,
+    color: '#ffffff',
+    fontSize: 18,
+    marginBottom: 20,
     textAlign: 'center',
+    fontWeight: '600',
+    letterSpacing: 1,
   },
   slider: {
     width: '100%',
@@ -280,14 +274,16 @@ const styles = StyleSheet.create({
   sliderLabels: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    marginTop: 5,
+    marginTop: 10,
   },
   sliderLabel: {
-    color: 'rgba(255, 255, 255, 0.7)',
-    fontSize: 12,
+    fontSize: 14,
+    fontWeight: 'bold',
   },
   buttonText: {
-    color: '#FFFFFF',
+    color: '#ffffff',
     fontWeight: 'bold',
+    fontSize: 16,
+    letterSpacing: 1,
   },
 });
